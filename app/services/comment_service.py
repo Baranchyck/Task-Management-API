@@ -50,7 +50,7 @@ async def get_comments_for_task(
     query = (
         select(Comment)
         .where(Comment.task_id == task_id)
-        .order_by(Comment.created_at.asc())
+        .order_by(Comment.created_at.asc(), Comment.id.asc())
         .limit(limit)
         .offset(offset)
     )

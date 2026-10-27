@@ -11,12 +11,11 @@ async def test_cancel_overdue_tasks_bulk(
     db_session: AsyncSession,
     test_user: User,
 ):
-    """Тест: функція автоскасування напряму скасовує прострочені задачі."""
     now = datetime.now(timezone.utc)
     past_date = now - timedelta(hours=2)
     future_date = now + timedelta(days=2)
 
-    # 1. Прострочена задача у Backlog -> має стати Cancelled
+    # Overdue tasks in Backlog & Review
     t1 = Task(
         title="Overdue Backlog Task",
         status=TaskStatus.BACKLOG,
@@ -24,7 +23,6 @@ async def test_cancel_overdue_tasks_bulk(
         author_id=test_user.id,
         deadline=past_date,
     )
-    # 2. Прострочена задача у Review -> має стати Cancelled (обходить звичайні переходи)
     t2 = Task(
         title="Overdue Review Task",
         status=TaskStatus.REVIEW,
@@ -32,7 +30,7 @@ async def test_cancel_overdue_tasks_bulk(
         author_id=test_user.id,
         deadline=past_date,
     )
-    # 3. Задача з дедлайном у майбутньому -> залишається In Progress
+    # Tasks that should NOT be cancelled
     t3 = Task(
         title="Future Task",
         status=TaskStatus.IN_PROGRESS,
@@ -40,7 +38,6 @@ async def test_cancel_overdue_tasks_bulk(
         author_id=test_user.id,
         deadline=future_date,
     )
-    # 4. Задача у Done з минулим дедлайном -> залишається Done
     t4 = Task(
         title="Completed Task",
         status=TaskStatus.DONE,
@@ -48,7 +45,6 @@ async def test_cancel_overdue_tasks_bulk(
         author_id=test_user.id,
         deadline=past_date,
     )
-    # 5. Задача без дедлайну -> залишається Backlog
     t5 = Task(
         title="No deadline Task",
         status=TaskStatus.BACKLOG,
@@ -60,12 +56,9 @@ async def test_cancel_overdue_tasks_bulk(
     db_session.add_all([t1, t2, t3, t4, t5])
     await db_session.commit()
 
-    # Викликаємо функцію автоскасування напряму
     cancelled_count = await cancel_overdue_tasks(session=db_session)
-
     assert cancelled_count == 2
 
-    # Перевіряємо статуси в базі
     await db_session.refresh(t1)
     await db_session.refresh(t2)
     await db_session.refresh(t3)

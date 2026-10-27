@@ -256,24 +256,25 @@ async def list_tasks(
             query = query.order_by(
                 priority_case.desc(),
                 Task.deadline.asc().nulls_last(),
+                Task.id.desc(),
             )
         else:
             query = query.order_by(
                 priority_case.asc(),
                 Task.deadline.asc().nulls_last(),
+                Task.id.desc(),
             )
     elif sort_by == "deadline":
         if is_desc:
-            query = query.order_by(Task.deadline.desc().nulls_last())
+            query = query.order_by(Task.deadline.desc().nulls_last(), Task.id.desc())
         else:
-            query = query.order_by(Task.deadline.asc().nulls_last())
+            query = query.order_by(Task.deadline.asc().nulls_last(), Task.id.desc())
     elif sort_by == "created_at":
         if is_desc:
-            query = query.order_by(Task.created_at.desc())
+            query = query.order_by(Task.created_at.desc(), Task.id.desc())
         else:
-            query = query.order_by(Task.created_at.asc())
+            query = query.order_by(Task.created_at.asc(), Task.id.desc())
     else:
-        # Fallback to default sorting: priority DESC, deadline ASC NULLS LAST
         priority_case = case(
             (Task.priority == TaskPriority.HIGH, 3),
             (Task.priority == TaskPriority.MEDIUM, 2),
@@ -283,6 +284,7 @@ async def list_tasks(
         query = query.order_by(
             priority_case.desc(),
             Task.deadline.asc().nulls_last(),
+            Task.id.desc(),
         )
 
     query = query.limit(limit).offset(offset)

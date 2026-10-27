@@ -4,7 +4,8 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=6, description="Password must be at least 6 characters")
+    password: str = Field(..., min_length=6, max_length=72, description="Password must be between 6 and 72 characters")
+
 
 
 class UserRead(BaseModel):
