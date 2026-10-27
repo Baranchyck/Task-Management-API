@@ -1,12 +1,12 @@
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import TaskStatus
+from app.models.enums import TaskPriority, TaskStatus
 from app.models.task import Task
 from app.models.user import User
-from app.schemas.task import TaskCreate, TaskUpdate
+from app.schemas.task import TaskCreate, TaskStats, TaskUpdate
 from app.services.transitions import ACTIVE_STATUSES, can_transition
 
 
@@ -192,3 +192,170 @@ async def delete_task(
 
     await db.delete(task)
     await db.commit()
+
+
+async def list_tasks(
+    db: AsyncSession,
+    q: str | None = None,
+    status_filter: TaskStatus | None = None,
+    priority_filter: TaskPriority | None = None,
+    assignee_id: int | None = None,
+    deadline_from: datetime | None = None,
+    deadline_to: datetime | None = None,
+    sort_by: str = "priority",
+    order: str = "desc",
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[Task], int]:
+    query = select(Task)
+    count_query = select(func.count(Task.id))
+
+    filters = []
+
+    if q:
+        search_pattern = f"%{q}%"
+        filters.append(
+            or_(
+                Task.title.ilike(search_pattern),
+                Task.description.ilike(search_pattern),
+            )
+        )
+
+    if status_filter is not None:
+        filters.append(Task.status == status_filter)
+
+    if priority_filter is not None:
+        filters.append(Task.priority == priority_filter)
+
+    if assignee_id is not None:
+        filters.append(Task.assignee_id == assignee_id)
+
+    if deadline_from is not None:
+        filters.append(Task.deadline >= deadline_from)
+
+    if deadline_to is not None:
+        filters.append(Task.deadline <= deadline_to)
+
+    if filters:
+        query = query.where(*filters)
+        count_query = count_query.where(*filters)
+
+    total = (await db.execute(count_query)).scalar() or 0
+
+    # Sorting
+    is_desc = order.lower() == "desc"
+
+    if sort_by == "priority":
+        priority_case = case(
+            (Task.priority == TaskPriority.HIGH, 3),
+            (Task.priority == TaskPriority.MEDIUM, 2),
+            (Task.priority == TaskPriority.LOW, 1),
+            else_=0,
+        )
+        if is_desc:
+            query = query.order_by(
+                priority_case.desc(),
+                Task.deadline.asc().nulls_last(),
+            )
+        else:
+            query = query.order_by(
+                priority_case.asc(),
+                Task.deadline.asc().nulls_last(),
+            )
+    elif sort_by == "deadline":
+        if is_desc:
+            query = query.order_by(Task.deadline.desc().nulls_last())
+        else:
+            query = query.order_by(Task.deadline.asc().nulls_last())
+    elif sort_by == "created_at":
+        if is_desc:
+            query = query.order_by(Task.created_at.desc())
+        else:
+            query = query.order_by(Task.created_at.asc())
+    else:
+        # Fallback to default sorting: priority DESC, deadline ASC NULLS LAST
+        priority_case = case(
+            (Task.priority == TaskPriority.HIGH, 3),
+            (Task.priority == TaskPriority.MEDIUM, 2),
+            (Task.priority == TaskPriority.LOW, 1),
+            else_=0,
+        )
+        query = query.order_by(
+            priority_case.desc(),
+            Task.deadline.asc().nulls_last(),
+        )
+
+    query = query.limit(limit).offset(offset)
+    tasks = list((await db.execute(query)).scalars().all())
+
+    return tasks, total
+
+
+async def get_overdue_tasks(
+    db: AsyncSession,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[Task], int]:
+    now = datetime.now(timezone.utc)
+    conditions = [
+        Task.deadline < now,
+        Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
+    ]
+
+    count_query = select(func.count(Task.id)).where(*conditions)
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = (
+        select(Task)
+        .where(*conditions)
+        .order_by(Task.deadline.asc())
+        .limit(limit)
+        .offset(offset)
+    )
+    tasks = list((await db.execute(query)).scalars().all())
+
+    return tasks, total
+
+
+async def get_task_stats(db: AsyncSession) -> TaskStats:
+    now = datetime.now(timezone.utc)
+
+    total = (await db.execute(select(func.count(Task.id)))).scalar() or 0
+
+    # Status distribution
+    status_query = select(Task.status, func.count(Task.id)).group_by(Task.status)
+    status_rows = (await db.execute(status_query)).all()
+    by_status = {s.value: 0 for s in TaskStatus}
+    for status_val, count in status_rows:
+        key = status_val.value if hasattr(status_val, "value") else str(status_val)
+        by_status[key] = count
+
+    # Priority distribution
+    priority_query = select(Task.priority, func.count(Task.id)).group_by(Task.priority)
+    priority_rows = (await db.execute(priority_query)).all()
+    by_priority = {p.value: 0 for p in TaskPriority}
+    for prio_val, count in priority_rows:
+        key = prio_val.value if hasattr(prio_val, "value") else str(prio_val)
+        by_priority[key] = count
+
+    # Overdue count
+    overdue_query = select(func.count(Task.id)).where(
+        Task.deadline < now,
+        Task.status.notin_([TaskStatus.DONE, TaskStatus.CANCELLED]),
+    )
+    overdue_count = (await db.execute(overdue_query)).scalar() or 0
+
+    # Active count
+    active_query = select(func.count(Task.id)).where(
+        Task.status.in_(ACTIVE_STATUSES),
+    )
+    active_count = (await db.execute(active_query)).scalar() or 0
+
+    return TaskStats(
+        total=total,
+        by_status=by_status,
+        by_priority=by_priority,
+        overdue_count=overdue_count,
+        active_count=active_count,
+    )
+

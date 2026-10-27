@@ -53,3 +53,12 @@ class TaskRead(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TaskStats(BaseModel):
+    total: int
+    by_status: dict[str, int]
+    by_priority: dict[str, int]
+    overdue_count: int
+    active_count: int
+
